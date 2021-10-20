@@ -1,9 +1,9 @@
 import cash, { Cash } from "cash-dom";
-import { StatBlock, AbilityScores } from "./statblock";
+import { StatBlock, AbilityScores, NameAndContent } from "./statblock";
 import { AllOptions } from "./options";
 import { IsConditionImmunity } from "./IsConditionImmunity";
 
-export const convertCharacterSheetToStatBlock = (options: AllOptions) => {
+export const convertCharacterSheetToStatBlock = async (options: AllOptions) => {
   const doc = cash(document);
   const characterSheetElement = doc.find(prefix("character-sheet"));
   const statBlock: Partial<StatBlock> = {
@@ -42,8 +42,8 @@ export const convertCharacterSheetToStatBlock = (options: AllOptions) => {
       .find(prefix("character-tidbits__classes"))
       .text()
       .trim(),
-    Traits: [],
-    Actions: [],
+    Traits: await getTraits(characterSheetElement),
+    Actions: await getActions(characterSheetElement),
     Reactions: [],
     LegendaryActions: [],
     ImageURL: getImageUrl(characterSheetElement),
@@ -52,6 +52,118 @@ export const convertCharacterSheetToStatBlock = (options: AllOptions) => {
   };
   return statBlock;
 };
+
+const activeClass = "ddbc-tab-list__nav-item--is-active"
+async function changeTabAndWaitForActive(tab: Element) : Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // If it is already active resolve immediately.
+    if(tab.classList.contains(activeClass)){
+      resolve()
+      return
+    }
+    // Create a dummy observer so this can't error out.
+    let obs = new MutationObserver((msg)=>{});
+    // Make the promise reject after a hard timeout and after disconnecting any observer.
+    const deadline = setTimeout((msg) => {
+      if(obs && obs.disconnect && typeof obs.disconnect === 'function'){
+        obs.disconnect();
+        console.log('MR Observer disconnected.'); 
+      }
+      reject(msg)
+    }, 10000, 'Operation timed out waiting for actions tab.')
+    // Create the real observer that resolves the promise if the tab is active.
+    obs = new MutationObserver((mutationRecords) => {
+      //TODO: parse the mutation list for class attribute changes instead.
+      console.log(mutationRecords)
+      // console.log(mutationRecords.map(mutRec => mutRec. && mutRec.target.contains(activeClass)).some(val => val))
+      // if(document.getElementsByClassName(actionsTabClass)[0].classList.contains(activeClass)){
+      if(mutationRecords.map(mrec => mrec.attributeName === 'class' && (mrec.target as Element).classList.contains(activeClass)).some(val=>val)){
+        //Give it a moment to fully resolve.
+        clearTimeout(deadline);
+        setTimeout(resolve, 500)
+        obs.disconnect()
+      }
+    })
+    obs.observe(tab, {attributes: true, attributeFilter: ['class']})
+    console.log('MR Observer watching tabs.');
+    (tab as HTMLDivElement).click()
+  })
+}
+// twloveduck 2021.10.19 -- Changes to pull actions out.
+async function getActions(element: Cash) : Promise<NameAndContent[]> {
+  //Need to use the document to use click if not selected.
+  const actionsTabClass = "ct-primary-box__tab--actions"
+  let tabs = document.getElementsByClassName(actionsTabClass) 
+  if(! (tabs && tabs.length))
+    throw "Couldn't find actions tab."
+
+  let tab = tabs[0]
+  if(!tab.classList.contains(activeClass)) {
+    //The actions tab is not activated. Click then wait till active to parse the tab.
+    
+    await changeTabAndWaitForActive(tab).catch(err => {throw err})
+  }
+
+  var stii_actions = [...document.getElementsByClassName("ddbc-combat-attack")]
+  console.log(stii_actions)
+  const replaceRe = /\n/g
+  function parseAction(ele) : NameAndContent {
+    let name = ele.children[1].innerText.split('\n')
+    
+    //Pull the damage type from the tooltip and make sure something is sane in the text.
+    let dType = ele.children[4].getElementsByClassName('ddbc-tooltip')
+    dType = dType.length ? dType[0].getAttribute('data-original-title') : 'type unknown'
+    dType = dType ? dType : 'type unknown'
+
+    let dDice = ele.children[4].innerText.replace(replaceRe, ' 2✋🏼: ')
+    return {
+      Name: name[0],
+      Content: (name.length > 1 ? name[1] + ' ': '') + 'attack: ' + 
+        ele.children[3].innerText.replaceAll(replaceRe, '') + ', ' + 
+        ele.children[2].innerText.replaceAll(replaceRe, ' ').trim() + 
+        '. Hit: ' + dDice + ' ' + dType + ' damage. Notes: ' +
+        ele.children[5].innerText
+    }
+  }
+  // return []
+  return stii_actions.map(ele => {
+    if(ele.children && ele.children.length && ele.children.length >= 6)
+    {
+      return parseAction(ele)
+    }
+    else
+      return undefined
+  }).filter(item => item != undefined)
+}
+
+async function getTraits(ele:Cash) : Promise<NameAndContent[]> {
+  //Need to use the document to use click if not selected.
+  const spellsTabClass = "ct-primary-box__tab--spells"
+  let tabs = document.getElementsByClassName(spellsTabClass) 
+  if(! (tabs && tabs.length))
+    return []
+
+  let tab = tabs[0]
+  await changeTabAndWaitForActive(tab).catch(err => {throw err})
+
+  let spellBlock : any = document.getElementsByClassName('ct-spells__content');
+  if(spellBlock && spellBlock.length)
+    spellBlock = spellBlock[0]
+  
+  let spellLevels = [...spellBlock.getElementsByClassName("ct-content-group") as HTMLCollectionOf<HTMLDivElement>]
+  if(! (spellLevels && spellLevels.length))
+    return []
+
+  //TODO: Pull attack and saves.
+  let spellRtn = {Name: 'Spellcasting',Content: "Spell attack ?, Spell save DC ?\n• " + 
+    spellLevels.map(ele=> 
+      `${(ele.getElementsByClassName('ct-content-group__header-content')[0] as any).innerText.toLowerCase()} (${ele.getElementsByClassName('ct-slot-manager__slot').length} slots): ${[...ele.getElementsByClassName('ddbc-spell-name')].map((sname:any)=>sname.innerText).join(', ')}`).join('\n• ')
+  }
+
+  //TODO: Pull other traits.
+
+  return [spellRtn]
+}
 
 function getHitPoints(element: Cash) {
   let maxHP = element

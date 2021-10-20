@@ -8,10 +8,11 @@ const tabs: typeof chrome.tabs = ext.tabs;
 const runtime: typeof chrome.runtime = ext.runtime;
 
 const popup = document.getElementById("app");
+const DEBUGGING = true;
 
 render(<Importer />, popup);
 
-tabs.query({ active: true, currentWindow: true }, function(browserTabs) {
+tabs.query({ active: true, currentWindow: true }, function (browserTabs) {
   var activeTab = browserTabs[0];
   tabs.sendMessage(
     activeTab.id,
@@ -42,6 +43,11 @@ function Importer(props: { importedStatBlock?: StatBlock }) {
           </div>
           {renderPortraitWarningIfNeeded(props.importedStatBlock)}
           <div class="action-container">
+            {/* @if env='development' */}
+            <button id="copy-btn" className="btn btn-secondary"
+              onClick={(evt) => navigator.clipboard.writeText(JSON.stringify(props.importedStatBlock, undefined, 2))}>Copy 📋</button>
+            <p className="version" id="version">Version: {'/* @echo env */ - /* @echo extension */'}</p>
+            {/* @endif */}
             <button
               id="save-btn"
               class="btn btn-primary"
@@ -87,8 +93,8 @@ function importStatBlock(statBlock: StatBlock) {
   return () =>
     runtime.sendMessage(
       { action: "perform-save", importedStatBlock: statBlock },
-      function(response) {
-        if (response && response.action === "saved") {
+      function (response) {
+        if (response && response.action && response.action === "saved") {
           console.log("ok");
         } else {
           throw "Could not import statblock";
